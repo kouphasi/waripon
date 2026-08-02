@@ -1,17 +1,27 @@
 {
   "name": "waripon",
+  "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "vite",
+    "dev:worker": "wrangler dev",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:browser": "vitest run src/app.browser.test.ts",
     "typecheck": "tsc --noEmit",
-    "deploy": "wrangler deploy --minify",
-    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+    "deploy": "pnpm build && wrangler deploy"
   },
   "dependencies": {
-    "hono": "^4.12.33"
+    "papaparse": "^5.5.4"
   },
   "devDependencies": {
+    "@types/papaparse": "^5.5.2",
+    "happy-dom": "^20.11.1",
     "typescript": "^7.0.2",
+    "vite": "^8.2.0",
+    "vitest": "^4.1.10",
     "wrangler": "^4.110.0"
   }
 }

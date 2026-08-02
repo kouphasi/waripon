@@ -1,21 +1,90 @@
-```txt
-npm install
-npm run dev
+# わりぽん
+
+登録やデータベースなしで使える、日本円向けの割り勘アプリです。参加者と支払いを入力すると、各人の負担額と、精算に必要な決定的な送金一覧を計算します。
+
+## 主な機能
+
+- 重複しない参加者の追加・改名と、支払いの追加・編集・削除
+- 複数の支払いをまとめてから行う、正確な円単位の端数調整
+- 参加者順で結果が安定する精算用送金一覧
+- 検証・プレビュー・確認を挟むCSV一括インポート
+- 圧縮した状態をURLフラグメントへ格納する共有リンク
+- スマートフォン対応の日本語UIとキーボード操作
+
+計算元の状態はブラウザ内にだけ保持します。認証、Cookie、サーバー側セッション、ユーザーデータ用API、データベースは使用しません。Cloudflare WorkersはViteの静的アセットだけを配信します。
+
+## ローカル開発
+
+このリポジトリの `mise.toml` はNode.jsとOpenSpecのバージョンを定義しています。pnpmを利用してください。
+
+```sh
+mise install
+pnpm install
+pnpm dev
 ```
 
-```txt
-npm run deploy
+Viteの開発サーバーに表示されたURLをブラウザで開きます。本番相当のアセット配信をローカルで確認する場合は、先にビルドしてWranglerを起動します。
+
+```sh
+pnpm build
+pnpm dev:worker
 ```
 
-[For generating/synchronizing types based on your Worker configuration run](https://developers.cloudflare.com/workers/wrangler/commands/#types):
+## テストとビルド
 
-```txt
-npm run cf-typegen
+```sh
+pnpm typecheck       # TypeScriptの型チェック
+pnpm test            # 単体テストとDOM統合テスト
+pnpm test:browser    # DOM統合テストだけを実行
+pnpm build           # 型チェック後に本番アセットを生成
+pnpm preview         # distをViteでプレビュー
 ```
 
-Pass the `CloudflareBindings` as generics when instantiating `Hono`:
+テストは状態検証、有理数演算、端数割り当て、差額と送金の不変条件、CSV、URL往復変換に加えて、手入力から精算までの主要画面フローを対象にしています。
 
-```ts
-// src/index.ts
-const app = new Hono<{ Bindings: CloudflareBindings }>()
+## CSV形式
+
+UTF-8のCSVファイルを使用します。先頭のUTF-8 BOMはあってもなくても構いません。必須ヘッダーは次の4列です。
+
+| 列 | 内容 |
+| --- | --- |
+| `description` | 支払いの説明（必須） |
+| `amount` | 正の整数円 |
+| `paid_by` | 支払った参加者名 |
+| `split_among` | `\|` で区切った1人以上の負担者名 |
+
+```csv
+description,amount,paid_by,split_among
+夕食,6000,あおい,あおい|はる|なつ
+"タクシー, 深夜",2400,はる,あおい|はる|なつ
 ```
+
+参加者は、各行の支払者と負担者に最初に現れた順で作成されます。名前の前後の空白は除去されます。構文、ヘッダー、金額、名前、負担者をファイル全体で検証し、エラーがあれば行番号を表示して一件も反映しません。プレビューで確認したときだけ現在の参加者と支払いを一括置換し、先頭の参加者を端数調整担当にします。画面内から同じ形式のテンプレートをダウンロードできます。
+
+## URL共有とプライバシー
+
+共有URLは、バージョン付きの参加者・支払い・端数担当をcompact JSON、deflate、base64urlの順に変換し、`#state=` フラグメントへ格納します。支払総額、負担額、差額、送金などの導出結果は含めず、復元後に必ず再計算します。
+
+- 共有URLの上限は8,000文字です。超えた場合は支払い件数や説明を減らしてください。
+- URLを受け取った人は参加者名と支払い内容を読めます。暗号化や改ざん防止は行っていません。
+- フラグメントは通常のHTTPリクエストには送られませんが、ブラウザ履歴やメッセージには残ります。機密情報には使用しないでください。
+- 未対応版、不正なデータ、過大なデータは部分復元せず、空の計算から回復できます。
+- Compression Streams APIとClipboard APIの対応状況により、古いブラウザでは共有や自動コピーを利用できない場合があります。URL欄からの手動コピーは可能です。
+
+## デプロイ
+
+CloudflareアカウントでWranglerへログインした後、次を実行します。
+
+```sh
+pnpm deploy
+```
+
+`wrangler.jsonc` は `dist` の静的アセットとSPAフォールバックだけを設定しています。KV、D1、R2などの永続化バインディングやユーザーデータ用エンドポイントはありません。
+
+## MVPの制限
+
+- 日本円・均等負担のみです。複数通貨、割合指定、不均等負担には対応しません。
+- 送金一覧は決定的ですが、送金件数が数学的に最小である保証はありません。
+- 計算途中の内容をローカルストレージやサーバーへ自動保存しません。
+- 共有状態の暗号化、署名、アクセス制御はありません。
+- 精算済み履歴の管理やCSVエクスポートは対象外です。
