@@ -30,6 +30,29 @@ interface UiMessage {
   field?: string
 }
 
+type TabId = 'settlement' | 'expenses' | 'participants'
+
+const TABS: Array<{ id: TabId; label: string }> = [
+  { id: 'settlement', label: '精算' },
+  { id: 'expenses', label: '支払い' },
+  { id: 'participants', label: '参加者' },
+]
+
+const AVATAR_CLASS_COUNT = 5
+
+function avatarClassIndex(id: string): number {
+  let hash = 0
+  for (let index = 0; index < id.length; index += 1) {
+    hash = (hash * 31 + id.charCodeAt(index)) >>> 0
+  }
+  return hash % AVATAR_CLASS_COUNT
+}
+
+function renderAvatarSpan(name: string, id: string, extraClass = ''): string {
+  const initial = [...name][0] ?? '?'
+  return `<span class="avatar ${extraClass} avatar--${avatarClassIndex(id)}" aria-hidden="true">${escapeHtml(initial)}</span>`
+}
+
 interface AppOptions {
   initialState?: CalculationStateV1
   idFactory?: IdFactory
@@ -42,6 +65,7 @@ interface AppOptions {
 export class WariponApp {
   private state: CalculationStateV1
   private readonly idFactory?: IdFactory
+  private activeTab: TabId = 'settlement'
   private message: UiMessage | null = null
   private expenseEditorId: string | null | undefined
   private csvDialogOpen = false
@@ -123,6 +147,16 @@ export class WariponApp {
     const button = target.closest<HTMLButtonElement>('[data-action]')
     if (!button) return
     const action = button.dataset.action
+
+    if (action === 'switch-tab') {
+      const tab = button.dataset.tab
+      if (tab === 'settlement' || tab === 'expenses' || tab === 'participants') {
+        this.activeTab = tab
+        this.message = null
+        this.render()
+      }
+      return
+    }
 
     if (action === 'delete-participant' && button.dataset.participantId) {
       const participant = this.state.participants.find(({ id }) => id === button.dataset.participantId)
@@ -212,6 +246,7 @@ export class WariponApp {
     if (action === 'dismiss-restore') {
       this.restoreProblem = null
       this.onClearFragment()
+      this.activeTab = 'participants'
       this.message = { tone: 'info', text: '空の計算から始めます。' }
       this.renderAndFocus('participant-name')
     }
@@ -337,36 +372,47 @@ export class WariponApp {
         <div class="site-header__inner">
           <a class="brand" href="/" aria-label="わりぽん ホーム">
             <span class="brand__mark" aria-hidden="true">割</span>
-            <span><strong>わりぽん</strong><small>登録なしのかんたん割り勘</small></span>
+            <strong>わりぽん</strong>
           </a>
-          <span class="privacy-chip">データはこの端末だけ</span>
+          ${this.renderTabNav('tab-nav', 'tab-nav__button')}
+          <button id="open-share" class="button button--glass" type="button" data-action="open-share">共有URLを作る</button>
         </div>
       </header>
       <main class="app-layout" id="main-content">
-        <section class="hero" aria-labelledby="page-title">
-          <p class="eyebrow">みんなの支払いを、すっきり一本化</p>
-          <h1 id="page-title">誰が誰に、いくら払う？</h1>
-          <p>参加者と支払いを入力すると、必要な送金額を円単位で計算します。</p>
-        </section>
         ${this.renderRestoreProblem()}
         ${this.renderMessage()}
-        <div class="workspace-grid">
-          <div class="workspace-main">
-            ${this.renderParticipants()}
-            ${this.renderExpenses()}
-            ${this.renderCsvPanel()}
-            ${this.renderSharePanel()}
-          </div>
-          <aside class="workspace-side">
-            ${this.renderResults()}
-          </aside>
-        </div>
+        ${this.renderActiveTab()}
       </main>
+      ${this.renderTabNav('tab-dock', 'tab-dock__button')}
       <footer class="site-footer">わりぽんは入力データをサーバーへ保存しません。</footer>
       ${this.expenseEditorId !== undefined ? this.renderExpenseDialog() : ''}
       ${this.csvDialogOpen ? this.renderCsvDialog() : ''}
       ${this.shareDialogOpen ? this.renderShareDialog() : ''}
     `
+  }
+
+  private renderTabNav(navClass: string, buttonClass: string): string {
+    return `
+      <nav class="${navClass}" aria-label="画面切り替え">
+        ${TABS.map(
+          (tab) => `
+            <button
+              class="${buttonClass}"
+              type="button"
+              data-action="switch-tab"
+              data-tab="${tab.id}"
+              ${this.activeTab === tab.id ? 'aria-current="page"' : ''}
+            >${tab.label}</button>
+          `,
+        ).join('')}
+      </nav>
+    `
+  }
+
+  private renderActiveTab(): string {
+    if (this.activeTab === 'expenses') return this.renderExpensesTab()
+    if (this.activeTab === 'participants') return this.renderParticipantsTab()
+    return this.renderSettlementTab()
   }
 
   private renderMessage(): string {
@@ -394,7 +440,7 @@ export class WariponApp {
     `
   }
 
-  private renderParticipants(): string {
+  private renderParticipantsTab(): string {
     const content =
       this.state.participants.length === 0
         ? '<p class="empty-state">参加者はまだいません。</p>'
@@ -409,9 +455,9 @@ export class WariponApp {
         `
 
     return `
-      <section class="panel" aria-labelledby="participants-title">
+      <section class="panel-glass" aria-labelledby="participants-title">
         <div class="section-heading">
-          <div><span class="step">1</span><h2 id="participants-title">参加者</h2></div>
+          <h2 id="participants-title">参加者</h2>
           <span class="tag">${this.state.participants.length}人</span>
         </div>
         <form class="inline-form" data-form="add-participant" novalidate>
@@ -440,15 +486,18 @@ export class WariponApp {
     const errorId = `participant-error-${participant.id}`
     return `
       <div class="participant-row">
-        <label class="rounding-choice" title="端数調整担当にする">
-          <input
-            type="radio"
-            name="roundingAssigneeId"
-            value="${escapeAttribute(participant.id)}"
-            ${this.state.roundingAssigneeId === participant.id ? 'checked' : ''}
-          />
-          <span>端数担当</span>
-        </label>
+        <div class="participant-row__lead">
+          ${renderAvatarSpan(participant.name, participant.id, 'avatar--sm')}
+          <label class="rounding-choice" title="端数調整担当にする">
+            <input
+              type="radio"
+              name="roundingAssigneeId"
+              value="${escapeAttribute(participant.id)}"
+              ${this.state.roundingAssigneeId === participant.id ? 'checked' : ''}
+            />
+            <span>端数担当</span>
+          </label>
+        </div>
         <form class="participant-name-form" data-form="rename-participant" data-participant-id="${escapeAttribute(participant.id)}">
           <label class="sr-only" for="${escapeAttribute(inputId)}">${escapeHtml(participant.name)}さんの名前</label>
           <input
@@ -472,53 +521,57 @@ export class WariponApp {
     `
   }
 
-  private renderExpenses(): string {
+  private renderExpensesTab(): string {
     const participantNames = new Map(this.state.participants.map(({ id, name }) => [id, name]))
     const content =
       this.state.expenses.length === 0
         ? `<p class="empty-state">${this.state.participants.length ? '「支払いを追加」から記録を始めましょう。' : '参加者を追加すると、支払いを記録できます。'}</p>`
         : `
-          <div class="data-table-wrap">
-            <table class="data-table">
-              <thead><tr><th>内容</th><th>支払者</th><th>負担者</th><th class="money">金額</th><th><span class="sr-only">操作</span></th></tr></thead>
-              <tbody>
-                ${this.state.expenses
-                  .map(
-                    (expense) => `
-                      <tr>
-                        <td>${escapeHtml(expense.description)}</td>
-                        <td>${escapeHtml(participantNames.get(expense.payerId) ?? '不明')}</td>
-                        <td>${escapeHtml(expense.burdenParticipantIds.map((id) => participantNames.get(id) ?? '不明').join('、'))}</td>
-                        <td class="money">${formatYen(BigInt(expense.amount))}</td>
-                        <td><div class="actions">
-                          <button class="button button--secondary button--small" type="button" data-action="edit-expense" data-expense-id="${escapeAttribute(expense.id)}">編集</button>
-                          <button class="button button--ghost button--small" type="button" data-action="delete-expense" data-expense-id="${escapeAttribute(expense.id)}">削除</button>
-                        </div></td>
-                      </tr>
-                    `,
-                  )
-                  .join('')}
-              </tbody>
-            </table>
-          </div>
+          <ul class="expense-list">
+            ${this.state.expenses
+              .map(
+                (expense) => `
+                  <li class="expense-row">
+                    ${renderAvatarSpan(participantNames.get(expense.payerId) ?? '不明', expense.payerId, 'avatar--sm')}
+                    <span class="expense-row__body">
+                      <strong>${escapeHtml(expense.description)}</strong>
+                      <small class="expense-row__meta">${escapeHtml(participantNames.get(expense.payerId) ?? '不明')}が支払い・${escapeHtml(expense.burdenParticipantIds.map((id) => participantNames.get(id) ?? '不明').join('、'))}で負担</small>
+                    </span>
+                    <span class="expense-row__trailing">
+                      <strong class="money">${formatYen(BigInt(expense.amount))}</strong>
+                      <div class="actions">
+                        <button class="button button--secondary button--small" type="button" data-action="edit-expense" data-expense-id="${escapeAttribute(expense.id)}">編集</button>
+                        <button class="button button--ghost button--small" type="button" data-action="delete-expense" data-expense-id="${escapeAttribute(expense.id)}">削除</button>
+                      </div>
+                    </span>
+                  </li>
+                `,
+              )
+              .join('')}
+          </ul>
         `
 
     return `
-      <section class="panel" aria-labelledby="expenses-title">
+      <section class="panel-glass" aria-labelledby="expenses-title">
         <div class="section-heading">
-          <div><span class="step">2</span><h2 id="expenses-title">支払い</h2></div>
-          <button id="open-expense" class="button button--secondary" type="button" data-action="open-expense" ${this.state.participants.length === 0 ? 'disabled' : ''}>支払いを追加</button>
+          <h2 id="expenses-title">支払い</h2>
+          <span class="tag">${this.state.expenses.length}件</span>
         </div>
         ${content}
+        <button id="open-expense" class="button button--primary button--block" type="button" data-action="open-expense" ${this.state.participants.length === 0 ? 'disabled' : ''}>＋ 支払いを追加</button>
+        <button id="open-csv" class="csv-row" type="button" data-action="open-csv">
+          <span class="csv-row__label">CSVからまとめて読み込む</span>
+          <span class="csv-row__action">選ぶ</span>
+        </button>
       </section>
     `
   }
 
-  private renderResults(): string {
+  private renderSettlementTab(): string {
     if (this.state.participants.length === 0) {
       return `
-        <section class="panel panel--accent" aria-labelledby="results-title">
-          <div class="section-heading"><div><span class="step">3</span><h2 id="results-title">精算結果</h2></div></div>
+        <section class="panel-glass" aria-labelledby="settlement-title">
+          <span class="eyebrow" id="settlement-title">SETTLEMENT</span>
           <p class="empty-state">参加者を追加すると、結果がここに表示されます。</p>
         </section>
       `
@@ -526,75 +579,110 @@ export class WariponApp {
 
     const result = calculateSettlement(this.state)
     const names = new Map(this.state.participants.map(({ id, name }) => [id, name]))
+    const roundingName = this.state.roundingAssigneeId ? names.get(this.state.roundingAssigneeId) : undefined
+
     const transferContent =
       this.state.expenses.length === 0
         ? '<p class="empty-state">支払いを追加すると送金額を計算します。</p>'
         : result.transfers.length === 0
           ? '<p class="settled-message"><span aria-hidden="true">✓</span>精算済みです。送金は必要ありません。</p>'
-          : `<ol class="transfer-list">${result.transfers
+          : `
+            <ol class="transfer-list">
+              ${result.transfers
+                .map(
+                  ({ fromParticipantId, toParticipantId, amount }) => `
+                    <li class="transfer-card">
+                      ${renderAvatarSpan(names.get(fromParticipantId) ?? '不明', fromParticipantId, 'avatar--lg')}
+                      <div class="transfer-card__body">
+                        <div class="transfer-card__label">${escapeHtml(names.get(fromParticipantId) ?? '不明')} から ${escapeHtml(names.get(toParticipantId) ?? '不明')} へ</div>
+                        <div class="transfer-card__amount">${formatYen(amount)}</div>
+                      </div>
+                    </li>
+                  `,
+                )
+                .join('')}
+            </ol>
+          `
+
+    const balanceCards = result.participants
+      .map(({ participantId, paid, assignedBurden, balance, roundingAdjustment }) => {
+        const participant = this.state.participants.find(({ id }) => id === participantId)
+        const adjustment =
+          participantId === this.state.roundingAssigneeId
+            ? `<small class="balance-card__adjustment">端数調整 ${formatSignedYen(roundingAdjustment)}</small>`
+            : ''
+        const balanceClass = balance > 0n ? 'money--positive' : balance < 0n ? 'money--negative' : ''
+        return `
+          <div class="balance-card">
+            <div class="balance-card__name">${escapeHtml(participant?.name ?? '不明')}${adjustment}</div>
+            <div class="balance-card__amount ${balanceClass}">${formatSignedYen(balance)}</div>
+            <div class="balance-card__detail">支払 ${formatYen(paid)} / 負担 ${formatYen(assignedBurden)}</div>
+          </div>
+        `
+      })
+      .join('')
+
+    return `
+      <div class="settlement-grid">
+        <div>
+          <div class="summary-line">
+            <span class="eyebrow" id="settlement-title">SETTLEMENT</span>
+            <span class="summary-line__total">合計 ${formatYen(result.totalPaid)} ／ ${this.state.participants.length}人${roundingName ? ` ／ 端数調整 ${escapeHtml(roundingName)}` : ''}</span>
+          </div>
+          ${transferContent}
+          <div class="balance-grid">${balanceCards}</div>
+        </div>
+        ${this.renderExpensesPreviewPanel()}
+      </div>
+    `
+  }
+
+  private renderExpensesPreviewPanel(): string {
+    const participantNames = new Map(this.state.participants.map(({ id, name }) => [id, name]))
+    const roundingName = this.state.roundingAssigneeId
+      ? participantNames.get(this.state.roundingAssigneeId)
+      : undefined
+    const listContent =
+      this.state.expenses.length === 0
+        ? '<p class="empty-state">「支払いを追加」から記録を始めましょう。</p>'
+        : `
+          <ul class="expense-list">
+            ${this.state.expenses
               .map(
-                ({ fromParticipantId, toParticipantId, amount }) => `
-                  <li><span><strong>${escapeHtml(names.get(fromParticipantId) ?? '不明')}</strong> から <strong>${escapeHtml(names.get(toParticipantId) ?? '不明')}</strong> へ</span><strong class="money">${formatYen(amount)}</strong></li>
+                (expense) => `
+                  <li class="expense-row">
+                    ${renderAvatarSpan(participantNames.get(expense.payerId) ?? '不明', expense.payerId, 'avatar--sm')}
+                    <span class="expense-row__body">
+                      <strong>${escapeHtml(expense.description)}</strong>
+                      <small class="expense-row__meta">${expense.burdenParticipantIds.length}人で負担</small>
+                    </span>
+                    <span class="expense-row__trailing">
+                      <strong class="money">${formatYen(BigInt(expense.amount))}</strong>
+                    </span>
+                  </li>
                 `,
               )
-              .join('')}</ol>`
+              .join('')}
+          </ul>
+        `
 
     return `
-      <section class="panel panel--accent" aria-labelledby="results-title">
-        <div class="section-heading"><div><span class="step">3</span><h2 id="results-title">精算結果</h2></div><span class="tag">合計 ${formatYen(result.totalPaid)}</span></div>
-        <div class="data-table-wrap result-table-wrap">
-          <table class="data-table result-table">
-            <thead><tr><th>参加者</th><th class="money">支払</th><th class="money">負担</th><th class="money">差額</th></tr></thead>
-            <tbody>
-              ${result.participants
-                .map(({ participantId, paid, assignedBurden, balance, roundingAdjustment }) => {
-                  const participant = this.state.participants.find(({ id }) => id === participantId)
-                  const adjustment =
-                    participantId === this.state.roundingAssigneeId
-                      ? `<small class="adjustment">端数調整 ${formatSignedYen(roundingAdjustment)}</small>`
-                      : ''
-                  return `
-                    <tr>
-                      <td><strong>${escapeHtml(participant?.name ?? '不明')}</strong>${adjustment}</td>
-                      <td class="money">${formatYen(paid)}</td>
-                      <td class="money">${formatYen(assignedBurden)}</td>
-                      <td class="money ${balance > 0n ? 'money--positive' : balance < 0n ? 'money--negative' : ''}">${formatSignedYen(balance)}</td>
-                    </tr>
-                  `
-                })
-                .join('')}
-            </tbody>
-          </table>
+      <div class="panel-glass">
+        <div class="section-heading">
+          <h2>支払い</h2>
+          <span class="tag">${this.state.expenses.length}件</span>
         </div>
-        <h3 class="subheading">送金する金額</h3>
-        ${transferContent}
-      </section>
-    `
-  }
-
-  private renderCsvPanel(): string {
-    return `
-      <section class="panel utility-panel" aria-labelledby="csv-title">
-        <div>
-          <p class="eyebrow">まとめて入力</p>
-          <h2 id="csv-title">CSVから読み込む</h2>
-          <p>参加者と支払いをプレビューしてから、現在の内容を一括で置き換えます。</p>
+        ${listContent}
+        <button id="open-expense" class="button button--primary button--block" type="button" data-action="open-expense" ${this.state.participants.length === 0 ? 'disabled' : ''}>＋ 支払いを追加</button>
+        <div class="participants-footer">
+          <div><strong>参加者 ${this.state.participants.length}人</strong><div class="participants-footer__note">端数調整：${escapeHtml(roundingName ?? 'なし')}</div></div>
+          <div class="avatar-stack">${this.state.participants.map((participant) => renderAvatarSpan(participant.name, participant.id, 'avatar--sm avatar--round')).join('')}</div>
         </div>
-        <button id="open-csv" class="button button--secondary" type="button" data-action="open-csv">CSVを選ぶ</button>
-      </section>
-    `
-  }
-
-  private renderSharePanel(): string {
-    return `
-      <section class="panel utility-panel utility-panel--share" aria-labelledby="share-title">
-        <div>
-          <p class="eyebrow">サーバー保存なし</p>
-          <h2 id="share-title">この計算をURLで共有</h2>
-          <p>参加者と支払いを圧縮して、共有URLの中だけに保存します。</p>
-        </div>
-        <button id="open-share" class="button button--primary" type="button" data-action="open-share">共有URLを作る</button>
-      </section>
+        <button id="open-csv" class="csv-row" type="button" data-action="open-csv">
+          <span class="csv-row__label">CSVからまとめて読み込む</span>
+          <span class="csv-row__action">選ぶ</span>
+        </button>
+      </div>
     `
   }
 

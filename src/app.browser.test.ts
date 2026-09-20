@@ -41,9 +41,11 @@ afterEach(() => {
 describe('manual expense flow', () => {
   it('手入力から精算し、端数担当radioの変更を即時反映する', async () => {
     const app = mountApp(root, { idFactory })
+    switchTab('participants')
     addParticipantThroughUi('あおい')
     addParticipantThroughUi('はる')
 
+    switchTab('settlement')
     click('[data-action="open-expense"]')
     expect(document.activeElement).not.toBe(qs('#expense-description'))
     await flushUi()
@@ -56,15 +58,18 @@ describe('manual expense flow', () => {
     expect(root.textContent).toContain('はる から あおい へ')
     expect(root.textContent).toContain('501円')
 
+    switchTab('participants')
     const secondRadio = qs<HTMLInputElement>('input[name="roundingAssigneeId"][value="participant-2"]')
     secondRadio.checked = true
     secondRadio.dispatchEvent(new Event('change', { bubbles: true }))
     expect(app.getState().roundingAssigneeId).toBe('participant-2')
+    switchTab('settlement')
     expect(root.textContent).toContain('端数調整 +1円')
   })
 
   it('入力エラーを通知して対象欄へフォーカスする', async () => {
     mountApp(root, { idFactory })
+    switchTab('participants')
     submit('[data-form="add-participant"]')
     await flushUi()
     const input = qs<HTMLInputElement>('#participant-name')
@@ -150,6 +155,10 @@ describe('accessibility and responsive semantics', () => {
   })
 
 })
+
+function switchTab(tab: 'settlement' | 'expenses' | 'participants'): void {
+  click(`[data-action="switch-tab"][data-tab="${tab}"]`)
+}
 
 function addParticipantThroughUi(name: string): void {
   setValue('#participant-name', name)
