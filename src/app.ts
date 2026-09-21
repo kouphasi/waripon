@@ -339,6 +339,11 @@ export class WariponApp {
             <span class="brand__mark" aria-hidden="true">割</span>
             <span><strong>わりぽん</strong><small>登録なしのかんたん割り勘</small></span>
           </a>
+          <nav class="section-nav" aria-label="セクション">
+            <a href="#results-title">精算</a>
+            <a href="#expenses-title">支払い</a>
+            <a href="#participants-title">参加者</a>
+          </nav>
           <span class="privacy-chip">データはこの端末だけ</span>
         </div>
       </header>
@@ -433,6 +438,13 @@ export class WariponApp {
     `
   }
 
+  private renderAvatar(participantId: string, modifier = ''): string {
+    const index = this.state.participants.findIndex(({ id }) => id === participantId)
+    const name = this.state.participants[index]?.name ?? '？'
+    const palette = index < 0 ? 0 : index % 6
+    return `<span class="avatar avatar--${palette}${modifier}" aria-hidden="true">${escapeHtml([...name][0] ?? '？')}</span>`
+  }
+
   private renderParticipant(participantId: string): string {
     const participant = this.state.participants.find(({ id }) => id === participantId)
     if (!participant) return ''
@@ -440,6 +452,7 @@ export class WariponApp {
     const errorId = `participant-error-${participant.id}`
     return `
       <div class="participant-row">
+        ${this.renderAvatar(participant.id)}
         <label class="rounding-choice" title="端数調整担当にする">
           <input
             type="radio"
@@ -487,7 +500,7 @@ export class WariponApp {
                     (expense) => `
                       <tr>
                         <td>${escapeHtml(expense.description)}</td>
-                        <td>${escapeHtml(participantNames.get(expense.payerId) ?? '不明')}</td>
+                        <td><span class="cell-person">${this.renderAvatar(expense.payerId, ' avatar--small')}${escapeHtml(participantNames.get(expense.payerId) ?? '不明')}</span></td>
                         <td>${escapeHtml(expense.burdenParticipantIds.map((id) => participantNames.get(id) ?? '不明').join('、'))}</td>
                         <td class="money">${formatYen(BigInt(expense.amount))}</td>
                         <td><div class="actions">
@@ -534,7 +547,13 @@ export class WariponApp {
           : `<ol class="transfer-list">${result.transfers
               .map(
                 ({ fromParticipantId, toParticipantId, amount }) => `
-                  <li><span><strong>${escapeHtml(names.get(fromParticipantId) ?? '不明')}</strong> から <strong>${escapeHtml(names.get(toParticipantId) ?? '不明')}</strong> へ</span><strong class="money">${formatYen(amount)}</strong></li>
+                  <li>
+                    ${this.renderAvatar(fromParticipantId)}
+                    <span class="transfer-body">
+                      <span class="transfer-route"><strong>${escapeHtml(names.get(fromParticipantId) ?? '不明')}</strong> から <strong>${escapeHtml(names.get(toParticipantId) ?? '不明')}</strong> へ</span>
+                      <strong class="money">${formatYen(amount)}</strong>
+                    </span>
+                  </li>
                 `,
               )
               .join('')}</ol>`
