@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mountApp, mountAppFromUrl } from './app'
+import { mountApp, mountAppFromUrl, type TabId } from './app'
 import type { CalculationStateV1 } from './domain'
 import { encodeStatePayload } from './share'
 
@@ -156,7 +156,7 @@ describe('accessibility and responsive semantics', () => {
 
 })
 
-function switchTab(tab: 'settlement' | 'expenses' | 'participants'): void {
+function switchTab(tab: TabId): void {
   click(`[data-action="switch-tab"][data-tab="${tab}"]`)
 }
 
