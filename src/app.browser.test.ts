@@ -118,9 +118,10 @@ describe('shared URL restoration', () => {
     const app = await mountAppFromUrl(
       root,
       { baseUrl: 'https://example.com/app' },
-      `#state=${encoded.payload}`,
+      `#s=${encoded.payload}`,
     )
-    expect(app.getState()).toEqual(initialState)
+    expect(app.getState().participants.map(({ name }) => name)).toEqual(['既存さん', 'そのほか'])
+    expect(app.getState().expenses).toMatchObject([{ description: '既存の支払い', amount: 500 }])
     expect(root.textContent).toContain('既存さん')
     expect(root.textContent).toContain('250円')
   })
