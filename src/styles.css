@@ -979,6 +979,12 @@ a {
   font-size: 0.76rem;
 }
 
+.csv-help__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .csv-errors {
   border-color: var(--danger);
   color: var(--danger);

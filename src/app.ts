@@ -1,6 +1,7 @@
 import { calculateSettlement, formatSignedYen, formatYen } from './calculate'
 import {
   CSV_HEADERS,
+  CSV_SPEC_MARKDOWN,
   CSV_TEMPLATE,
   csvTemplateDataUrl,
   parseExpenseCsv,
@@ -71,6 +72,7 @@ export class WariponApp {
   private csvDialogOpen = false
   private csvResult: CsvImportResult | null = null
   private csvFileName = ''
+  private csvCopyMessage = ''
   private shareDialogOpen = false
   private shareLoading = false
   private shareResult: ShareUrlResult | null = null
@@ -198,6 +200,7 @@ export class WariponApp {
       this.csvDialogOpen = true
       this.csvResult = null
       this.csvFileName = ''
+      this.csvCopyMessage = ''
       this.message = null
       this.renderAndFocus('csv-file')
       return
@@ -208,6 +211,11 @@ export class WariponApp {
       this.csvResult = null
       this.csvFileName = ''
       this.renderAndFocus('open-csv')
+      return
+    }
+
+    if (action === 'copy-csv-spec') {
+      void this.copyCsvSpec()
       return
     }
 
@@ -310,6 +318,7 @@ export class WariponApp {
 
   private async loadCsvFile(file: File): Promise<void> {
     this.csvFileName = file.name
+    this.csvCopyMessage = ''
     try {
       this.csvResult = parseExpenseCsv(await file.text(), this.idFactory)
     } catch {
@@ -324,6 +333,21 @@ export class WariponApp {
         .querySelector<HTMLElement>(this.csvResult?.success ? '#csv-preview-title' : '#csv-errors-title')
         ?.focus(),
     )
+  }
+
+  private async copyCsvSpec(): Promise<void> {
+    if (!this.clipboard) {
+      this.csvCopyMessage = 'このブラウザでは自動コピーできません。'
+      this.renderAndFocus('copy-csv-spec')
+      return
+    }
+    try {
+      await this.clipboard.writeText(CSV_SPEC_MARKDOWN)
+      this.csvCopyMessage = 'CSV仕様書をMarkdownでコピーしました。'
+    } catch {
+      this.csvCopyMessage = 'コピーできませんでした。'
+    }
+    this.renderAndFocus('copy-csv-spec')
   }
 
   private async prepareShareUrl(): Promise<void> {
@@ -764,11 +788,15 @@ export class WariponApp {
             <input id="csv-file" name="csvFile" type="file" accept=".csv,text/csv" />
             ${this.csvFileName ? `<small class="field-help">選択中：${escapeHtml(this.csvFileName)}</small>` : ''}
           </div>
-          <details class="csv-help" ${result ? '' : 'open'}>
+          <details class="csv-help" ${result && !this.csvCopyMessage ? '' : 'open'}>
             <summary>CSV形式とテンプレート</summary>
             <p>必須ヘッダーは <code>${CSV_HEADERS.join(', ')}</code> です。<code>split_among</code> は名前を <code>|</code> で区切ります。</p>
             <pre><code>${escapeHtml(CSV_TEMPLATE.trim())}</code></pre>
-            <a class="button button--secondary button--small" href="${csvTemplateDataUrl()}" download="waripon-template.csv">テンプレートをダウンロード</a>
+            <div class="csv-help__actions">
+              <a class="button button--secondary button--small" href="${csvTemplateDataUrl()}" download="waripon-template.csv">テンプレートをダウンロード</a>
+              <button id="copy-csv-spec" class="button button--secondary button--small" type="button" data-action="copy-csv-spec">仕様書をMarkdownでコピー</button>
+            </div>
+            ${this.csvCopyMessage ? `<p class="copy-message" role="status">${escapeHtml(this.csvCopyMessage)}</p>` : ''}
           </details>
           ${resultContent}
           <div class="dialog__actions">

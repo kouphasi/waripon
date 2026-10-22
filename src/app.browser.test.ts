@@ -97,6 +97,20 @@ describe('CSV replacement flow', () => {
   })
 })
 
+describe('CSV spec copy', () => {
+  it('CSV仕様書をMarkdownでクリップボードへコピーする', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    mountApp(root, { initialState, idFactory, clipboard: { writeText } })
+    click('[data-action="open-csv"]')
+    click('[data-action="copy-csv-spec"]')
+    await vi.waitFor(() => expect(root.textContent).toContain('CSV仕様書をMarkdownでコピーしました。'))
+    const markdown = writeText.mock.calls[0]?.[0] as string
+    expect(markdown).toMatch(/^# わりぽん CSVインポート仕様/)
+    expect(markdown).toContain('| `split_among` | ○ | 負担する人の名前を `\\|` で区切って')
+    expect(markdown).toContain('```csv\ndescription,amount,paid_by,split_among\n')
+  })
+})
+
 describe('shared URL restoration', () => {
   it('共有リンクから元データを復元して計算し直す', async () => {
     const encoded = await encodeStatePayload(initialState)
