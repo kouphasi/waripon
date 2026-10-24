@@ -22,8 +22,7 @@
   --glass-shadow-strong: rgb(90 60 30 / 20%);
   --chip-bg: rgb(255 255 255 / 62%);
   --overlay: rgb(24 20 16 / 32%);
-  --dialog-1: rgb(255 255 255 / 92%);
-  --dialog-2: rgb(255 255 255 / 78%);
+  --dialog-bg: #fbf8f3;
   --radius-lg: 28px;
   --radius-md: 22px;
   --radius-sm: 14px;
@@ -77,8 +76,7 @@
     --glass-shadow-strong: rgb(0 0 0 / 65%);
     --chip-bg: rgb(255 255 255 / 7%);
     --overlay: rgb(0 0 0 / 45%);
-    --dialog-1: rgb(48 42 36 / 88%);
-    --dialog-2: rgb(30 26 22 / 80%);
+    --dialog-bg: #241f1a;
     --avatar-0-from: #ffc489;
     --avatar-0-to: #ff9d4d;
     --avatar-0-fg: #1a1512;
@@ -906,9 +904,7 @@ a {
   border-radius: var(--radius-lg);
   padding: 26px;
   color: var(--ink);
-  background: linear-gradient(150deg, var(--dialog-1), var(--dialog-2));
-  backdrop-filter: blur(30px) saturate(190%);
-  -webkit-backdrop-filter: blur(30px) saturate(190%);
+  background: var(--dialog-bg);
   box-shadow: 0 28px 70px var(--glass-shadow-strong);
 }
 
