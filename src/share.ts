@@ -3,9 +3,27 @@ import {
   type CalculationStateV1,
 } from './domain'
 
+type CompressionFormat = 'deflate' | 'deflate-raw'
+
 export const MAX_SHARE_URL_LENGTH = 8_000
 export const MAX_SERIALIZED_STATE_BYTES = 64 * 1024
 export const MAX_COMPRESSED_STATE_BYTES = 48 * 1024
+
+/** 現行の共有フラグメントキー。旧形式の `state` より短い。 */
+const SHARE_FRAGMENT_KEY = 's'
+/** 旧形式（v1）の共有フラグメントキー。既に配布済みのリンクを復元するためだけに残す。 */
+const LEGACY_SHARE_FRAGMENT_KEY = 'state'
+
+/**
+ * v2の共有形式。乱数IDはURLを長くするだけなので含めず、参加者は配列の位置で参照する。
+ * 負担者の空配列は「参加者全員」を表す（通常の状態では負担者が空になることはない）。
+ */
+type WireStateV2 = [
+  version: 2,
+  participantNames: string[],
+  expenses: Array<[description: string, amount: number, payerIndex: number, burdenIndexes: number[]]>,
+  roundingAssigneeIndex: number,
+]
 
 interface WireStateV1 {
   v: 1
@@ -67,7 +85,7 @@ export async function encodeStatePayload(state: CalculationStateV1): Promise<Sha
   if (serialized.byteLength > MAX_SERIALIZED_STATE_BYTES) {
     return tooLargeFailure()
   }
-  const compressed = await compress(serialized)
+  const compressed = await compress(serialized, 'deflate-raw')
   if (compressed.byteLength > MAX_COMPRESSED_STATE_BYTES) {
     return tooLargeFailure()
   }
@@ -87,7 +105,7 @@ export async function createShareUrl(
   } catch {
     return { success: false, code: 'invalid-data', message: '現在のURLを共有リンクに変換できません。' }
   }
-  url.hash = `state=${encoded.payload}`
+  url.hash = `${SHARE_FRAGMENT_KEY}=${encoded.payload}`
   const shareUrl = url.toString()
   if (shareUrl.length > MAX_SHARE_URL_LENGTH) return tooLargeFailure()
   return { success: true, url: shareUrl, payload: encoded.payload }
@@ -95,8 +113,9 @@ export async function createShareUrl(
 
 export async function restoreStateFromFragment(fragment: string): Promise<RestoreResult> {
   const parameters = new URLSearchParams(fragment.startsWith('#') ? fragment.slice(1) : fragment)
-  const payload = parameters.get('state')
-  if (!payload) return { status: 'none' }
+  const payload = parameters.get(SHARE_FRAGMENT_KEY)
+  const legacyPayload = parameters.get(LEGACY_SHARE_FRAGMENT_KEY)
+  if (!payload && !legacyPayload) return { status: 'none' }
   if (!supportsStateCompression()) {
     return {
       status: 'unsupported-browser',
@@ -104,7 +123,9 @@ export async function restoreStateFromFragment(fragment: string): Promise<Restor
     }
   }
 
-  const decoded = await decodeStatePayload(payload)
+  const decoded = payload
+    ? await decodeStatePayload(payload)
+    : await decodeLegacyStatePayload(legacyPayload ?? '')
   if (decoded.success) return { status: 'success', state: decoded.state }
   if (decoded.code === 'unsupported-version') {
     return { status: 'unsupported-version', message: decoded.message }
@@ -112,12 +133,30 @@ export async function restoreStateFromFragment(fragment: string): Promise<Restor
   return { status: 'invalid', message: decoded.message }
 }
 
-export async function decodeStatePayload(
-  payload: string,
-): Promise<
+type DecodeResult =
   | { success: true; state: CalculationStateV1 }
   | { success: false; code: ShareFailureCode; message: string }
-> {
+
+export async function decodeStatePayload(payload: string): Promise<DecodeResult> {
+  return decodePayload(payload, 'deflate-raw', (parsed) => {
+    if (!Array.isArray(parsed)) return null
+    return parsed[0] === 2 ? fromWireState(parsed) : 'unsupported-version'
+  })
+}
+
+/** v1形式（`#state=`）のリンクを復元する。 */
+export async function decodeLegacyStatePayload(payload: string): Promise<DecodeResult> {
+  return decodePayload(payload, 'deflate', (parsed) => {
+    if (isRecord(parsed) && parsed.v !== 1) return 'unsupported-version'
+    return fromWireStateV1(parsed)
+  })
+}
+
+async function decodePayload(
+  payload: string,
+  format: CompressionFormat,
+  expand: (parsed: unknown) => unknown | null | 'unsupported-version',
+): Promise<DecodeResult> {
   if (!supportsStateCompression()) {
     return {
       success: false,
@@ -134,16 +173,16 @@ export async function decodeStatePayload(
     if (compressed.byteLength > MAX_COMPRESSED_STATE_BYTES) {
       return invalidData('共有リンクのデータが大きすぎます。')
     }
-    const decompressed = await decompressWithLimit(compressed, MAX_SERIALIZED_STATE_BYTES)
+    const decompressed = await decompressWithLimit(compressed, format, MAX_SERIALIZED_STATE_BYTES)
     const parsed: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(decompressed))
-    if (isRecord(parsed) && parsed.v !== 1) {
+    const expanded = expand(parsed)
+    if (expanded === 'unsupported-version') {
       return {
         success: false,
         code: 'unsupported-version',
         message: 'この共有リンクのバージョンには対応していません。作成者に新しいリンクを依頼してください。',
       }
     }
-    const expanded = fromWireState(parsed)
     if (!expanded) return invalidData('共有リンクの形式が正しくありません。')
     const validated = validateCalculationState(expanded)
     if (!validated.success) return invalidData('共有リンクの計算データを検証できませんでした。')
@@ -153,25 +192,58 @@ export async function decodeStatePayload(
   }
 }
 
-function toWireState(state: CalculationStateV1): WireStateV1 {
+function toWireState(state: CalculationStateV1): WireStateV2 {
+  const indexOf = new Map(state.participants.map(({ id }, index) => [id, index]))
+  const participantIndex = (id: string): number => indexOf.get(id) ?? -1
+  return [
+    2,
+    state.participants.map(({ name }) => name),
+    state.expenses.map(({ description, amount, payerId, burdenParticipantIds }) => [
+      description,
+      amount,
+      participantIndex(payerId),
+      burdenParticipantIds.length === state.participants.length
+        ? []
+        : burdenParticipantIds.map(participantIndex),
+    ]),
+    state.roundingAssigneeId === null ? -1 : participantIndex(state.roundingAssigneeId),
+  ]
+}
+
+/**
+ * v2形式を状態へ展開する。IDはURLに含まれないため、復元時に位置から決定的に振り直す。
+ * 範囲外の位置は存在しないIDとなり、後段の検証で拒否される。
+ */
+function fromWireState(input: unknown[]): unknown | null {
+  if (input.length !== 4) return null
+  const [, names, expenses, roundingIndex] = input
+  if (!Array.isArray(names) || !Array.isArray(expenses) || typeof roundingIndex !== 'number') {
+    return null
+  }
+  const participantIds = names.map((_, index) => `participant_${index + 1}`)
+  const participantId = (index: unknown): string | null =>
+    typeof index === 'number' ? (participantIds[index] ?? `participant_missing_${index}`) : null
   return {
-    v: 1,
-    c: 'JPY',
-    p: state.participants.map(({ id, name }) => [id, name]),
-    e: state.expenses.map(
-      ({ id, description, amount, payerId, burdenParticipantIds }) => [
-        id,
-        description,
-        amount,
-        payerId,
-        burdenParticipantIds,
-      ],
+    version: 1,
+    currency: 'JPY',
+    participants: names.map((name, index) => ({ id: participantIds[index], name })),
+    expenses: expenses.map((expense, index) =>
+      Array.isArray(expense) && expense.length === 4 && Array.isArray(expense[3])
+        ? {
+            id: `expense_${index + 1}`,
+            description: expense[0],
+            amount: expense[1],
+            payerId: participantId(expense[2]),
+            burdenParticipantIds:
+              expense[3].length === 0 ? participantIds : expense[3].map(participantId),
+          }
+        : null,
     ),
-    r: state.roundingAssigneeId,
+    roundingAssigneeId: roundingIndex === -1 ? null : participantId(roundingIndex),
   }
 }
 
-function fromWireState(input: unknown): unknown | null {
+function fromWireStateV1(input: unknown): unknown | null {
   if (!isRecord(input) || input.v !== 1 || input.c !== 'JPY') return null
   if (!Array.isArray(input.p) || !Array.isArray(input.e)) return null
   return {
@@ -197,17 +269,21 @@ function fromWireState(input: unknown): unknown | null {
   }
 }
 
-async function compress(bytes: Uint8Array): Promise<Uint8Array> {
+async function compress(bytes: Uint8Array, format: CompressionFormat): Promise<Uint8Array> {
   const stream = new Blob([new Uint8Array(bytes)])
     .stream()
-    .pipeThrough(new CompressionStream('deflate'))
+    .pipeThrough(new CompressionStream(format))
   return collectStream(stream, MAX_COMPRESSED_STATE_BYTES)
 }
 
-async function decompressWithLimit(bytes: Uint8Array, limit: number): Promise<Uint8Array> {
+async function decompressWithLimit(
+  bytes: Uint8Array,
+  format: CompressionFormat,
+  limit: number,
+): Promise<Uint8Array> {
   const stream = new Blob([new Uint8Array(bytes)])
     .stream()
-    .pipeThrough(new DecompressionStream('deflate'))
+    .pipeThrough(new DecompressionStream(format))
   return collectStream(stream, limit)
 }
 
